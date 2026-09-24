@@ -124,7 +124,7 @@ sequenceDiagram
     participant DB as H2
 
     IM->>SA: resolve(IncomingEmail)
-    Note over IM,SA: priya.sharma：「#4471 被扣兩次」
+    Note over IM,SA: priya.sharma：「#35;4471 被扣兩次」
     SA->>LLM: system prompt + 信件 + 10 個工具定義
     LLM->>MCP: lookup_customer_by_email
     MCP->>DB: SELECT CUSTOMERS
