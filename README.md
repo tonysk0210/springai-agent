@@ -112,7 +112,7 @@ flowchart LR
 
 ### LLM 的一次決策過程（以「重複扣款」為例）
 
-下圖依 [畫面與 log 實錄](#畫面與-log-實錄) 中那次真實處理繪製。**沒有任何程式碼規定這個順序** —— 它是 LLM 根據系統提示詞的六個步驟自己推導出來的；前三個查詢甚至是 LLM 在同一輪**並行**發出的。
+下圖為 [畫面與 log 實錄](#畫面與-log-實錄) 中那次處理的正常流程。**沒有任何程式碼規定這個順序** —— 它是 LLM 根據系統提示詞的六個步驟自己推導出來的；前三個查詢甚至是 LLM 在同一輪**並行**發出的。
 
 ```mermaid
 sequenceDiagram
@@ -128,11 +128,12 @@ sequenceDiagram
     SA->>LLM: system prompt + 信件 + 10 個工具定義
     par 同一輪並行發出
         LLM->>MCP: lookup_customer_by_email
-        MCP--xLLM: 錯誤：MCP session terminated
+        MCP->>DB: SELECT CUSTOMERS
+        MCP-->>LLM: Priya Sharma · SILVER · zh
     and
         LLM->>MCP: get_customer_orders_by_order_number(4471)
         MCP->>DB: SELECT ORDERS · PAYMENTS
-        MCP-->>LLM: Priya Sharma · 2 筆 CAPTURED $199.99
+        MCP-->>LLM: 2 筆 CAPTURED $199.99
     and
         LLM->>MCP: detect_duplicate_charges_by_order_number(4471)
         MCP-->>LLM: duplicateDetected=true · 超收 $199.99
