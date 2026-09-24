@@ -16,7 +16,7 @@
   <img alt="Axios" src="https://img.shields.io/badge/Axios-1.18-5A29E4?logo=axios&logoColor=white">
 </p>
 <p>
-  <img alt="OpenAI" src="https://img.shields.io/badge/OpenAI-Chat%20Model-412991?logo=openai&logoColor=white">
+  <img alt="OpenAI" src="https://img.shields.io/badge/OpenAI-gpt--4o--mini-412991?logo=openai&logoColor=white">
   <img alt="H2" src="https://img.shields.io/badge/H2-File%20DB-09476B?logo=h2database&logoColor=white">
   <img alt="Docker" src="https://img.shields.io/badge/Docker-Mailpit-2496ED?logo=docker&logoColor=white">
 </p>
@@ -578,7 +578,7 @@ if (!handled) mailpitInboxClient.setRead(id, false);          // 失敗 → 標�
 | 項目 | 版本／artifact | 備註 |
 |---|---|---|
 | Java / Boot / Spring AI | 同上（**25 / 4.1.0 / 2.0.0**） | 兩份 pom 應鎖同版號 |
-| LLM | `spring-ai-starter-model-openai` | 未指定 `chat.model`，使用 Spring AI 預設模型 |
+| LLM | `spring-ai-starter-model-openai` · **`gpt-4o-mini`** | 由 `spring.ai.openai.chat.model` 明確指定。⚠️ key 是 `chat.model`，**不是** `chat.options.model`；拿掉這行會沿用 Spring AI 2.0.0 預設的 `gpt-5-mini` |
 | MCP | `spring-ai-starter-mcp-client` | Streamable HTTP 連線，工具轉成 `ToolCallbackProvider` |
 | 郵件 | `spring-boot-starter-mail` | `JavaMailSender` 依 `spring.mail.*` 自動配置 |
 | HTTP | `RestClient` | 呼叫 Mailpit REST API |
@@ -602,7 +602,7 @@ if (!handled) mailpitInboxClient.setRead(id, false);          // 失敗 → 標�
 |---|---|
 | **Mailpit**（`axllent/mailpit:latest`） | 假 SMTP + Web UI + REST API，所有信件只在本機，不會真的寄出 |
 | **H2** | 檔案型資料庫，路徑 `mcp-server/h2db/mcpserverdb` |
-| **OpenAI API** | LLM 推論與 tool calling |
+| **OpenAI API**（`gpt-4o-mini`） | LLM 推論與 tool calling |
 
 ---
 
@@ -865,6 +865,7 @@ SUPPORT_TICKETS (id, customer_id→, order_id→, product_id→, channel,
 | Property | 值 | 說明 |
 |---|---|---|
 | `spring.ai.openai.api-key` | `${OPENAI_API_KEY}` | |
+| `spring.ai.openai.chat.model` | `gpt-4o-mini` | 明確指定以免升級 Spring AI 時被無聲更換；未設定則為 `gpt-5-mini` |
 | `spring.ai.mcp.client.streamable-http.connections.mcp-server.url` | `http://localhost:8090` | |
 | `spring.ai.mcp.client.streamable-http.connections.mcp-server.endpoint` | `/mcp` | |
 | `spring.mail.host` / `port` | `localhost` / `1025` | 若 Agent 也進 Docker，host 改 `mailpit` |
