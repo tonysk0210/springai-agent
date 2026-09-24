@@ -9,6 +9,7 @@
   <img alt="Spring AI" src="https://img.shields.io/badge/Spring%20AI-2.0.0-6DB33F?logo=spring&logoColor=white">
   <img alt="MCP" src="https://img.shields.io/badge/MCP-Streamable%20HTTP-1a1a1a?logo=modelcontextprotocol&logoColor=white">
   <img alt="Lombok" src="https://img.shields.io/badge/Lombok-1.18-BC4521?logo=lombok&logoColor=white">
+  <img alt="Maven" src="https://img.shields.io/badge/Maven-3.9.16-C71A36?logo=apachemaven&logoColor=white">
 </p>
 <p>
   <img alt="React" src="https://img.shields.io/badge/React-19.2-61DAFB?logo=react&logoColor=black">
@@ -629,7 +630,7 @@ if (!handled) mailpitInboxClient.setRead(id, false);          // 失敗 → 標�
 | **Docker Desktop** | Mailpit | 收不到信，`/seed-mail` 回 502 |
 | **Node.js 20+** | emailUI | 沒有前端（仍可用 curl 注入） |
 | **OpenAI API Key** | Agent 呼叫 LLM | 每封信處理失敗、標回未讀無限重試 |
-| Maven | — | 已內建 wrapper（`mvnw`），不需另裝 |
+| Maven 3.9.16 | — | 已內建 wrapper（`mvnw`），首次執行自動下載，不需另裝 |
 
 ### 環境變數
 
