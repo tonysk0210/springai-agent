@@ -123,7 +123,8 @@ sequenceDiagram
     participant MCP as mcp-server
     participant DB as H2
 
-    IM->>SA: resolve(IncomingEmail)<br/>priya.sharma：「#4471 被扣兩次」
+    IM->>SA: resolve(IncomingEmail)
+    Note over IM,SA: priya.sharma：「#4471 被扣兩次」
     SA->>LLM: system prompt + 信件 + 10 個工具定義
     LLM->>MCP: lookup_customer_by_email
     MCP->>DB: SELECT CUSTOMERS
@@ -137,7 +138,8 @@ sequenceDiagram
     MCP->>DB: INSERT REFUNDS · UPDATE PAYMENTS → REFUNDED
     LLM->>MCP: log_support_ticket(BILLING_ISSUE, NEGATIVE, zh)
     MCP->>DB: INSERT SUPPORT_TICKETS
-    LLM-->>SA: AgentResponse JSON<br/>{replySubject, replyBody, operatorSummary}
+    LLM-->>SA: AgentResponse JSON
+    Note over SA,LLM: replySubject · replyBody · operatorSummary
     SA-->>IM: 交給 SupportMailSender 回信
 ```
 
