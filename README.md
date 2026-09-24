@@ -21,7 +21,7 @@
   <img alt="Docker" src="https://img.shields.io/badge/Docker-Mailpit-2496ED?logo=docker&logoColor=white">
 </p>
 
-## 這個 repo 想證明的一件事
+## 為什麼做這個專案
 
 傳統客服自動化的做法是**把流程寫死**：關鍵字比對 → 分類 → 走對應分支 → 套範本回信。每多一種情境，就要多一條分支。
 
@@ -236,8 +236,6 @@ mcp-server 啟動時 `schema.sql` + `data.sql` 建好 7 張表。這一輪只會
 接著 `TokenUsageAuditAdvisor` 印出這次共用了 **5,333 tokens**（prompt 3,665 / completion 1,668，其中 3,456 命中快取），`AgentEmailHandler` 印出給真人看的 `operatorSummary`，最後 `SupportMailSender` 回報「已回覆給 priya.sharma@example.com」。
 
 ![Agent console 的工具呼叫日誌](docs/screenshots/agent-console.png)
-
-> 📌 **值得注意的一行**：`lookup_customer_by_email → MCP session with server terminated`。這次查客戶的呼叫其實失敗了（mcp-server 重啟過，舊的 MCP session 失效），但 LLM 沒有卡住 —— 另外兩個並行查詢已經回傳了客戶姓名與 email，它就依這些資料繼續處理。這正是系統提示詞「若工具呼叫失敗，請依據你實際取得的資訊繼續處理」的效果。
 
 #### ⑤ Mailpit 攔截 AI 回覆
 
@@ -609,6 +607,19 @@ if (!handled) mailpitInboxClient.setRead(id, false);          // 失敗 → 標�
 ---
 
 ## 5. 快速開始與本地部署
+
+### 服務網址一覽
+
+全部啟動後，可以從這些網址進入各個服務：
+
+| 服務 | 網址 | 用途 |
+|---|---|---|
+| emailUI | <http://localhost:5173> | 注入測試信件、查看寄件歷史 |
+| Agent Client | <http://localhost:8080> | `POST /seed-mail` 注入測試信 |
+| Mailpit Web UI | <http://localhost:8025> | 查看客戶來信與 AI 回覆 |
+| Mailpit SMTP | `localhost:1025` | 收發信（不是網頁） |
+| H2 Console | <http://localhost:8090/h2-console> | 查資料表；JDBC URL `jdbc:h2:file:./h2db/mcpserverdb`、帳號 `sa`、密碼留空 |
+| MCP 端點 | `http://localhost:8090/mcp` | Streamable HTTP，由 Agent 連線（不是網頁） |
 
 ### 環境需求
 
