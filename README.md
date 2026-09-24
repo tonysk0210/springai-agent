@@ -112,7 +112,7 @@ flowchart LR
 
 ### LLM 的一次決策過程（以「重複扣款」為例）
 
-下圖是一次真實處理的工具呼叫順序。**沒有任何程式碼規定這個順序** —— 它是 LLM 根據系統提示詞的六個步驟自己推導出來的。
+下圖依 [畫面與 log 實錄](#畫面與-log-實錄) 中那次真實處理繪製。**沒有任何程式碼規定這個順序** —— 它是 LLM 根據系統提示詞的六個步驟自己推導出來的；前三個查詢甚至是 LLM 在同一輪**並行**發出的。
 
 ```mermaid
 sequenceDiagram
@@ -126,18 +126,24 @@ sequenceDiagram
     IM->>SA: resolve(IncomingEmail)
     Note over IM,SA: priya.sharma：「#35;4471 被扣兩次」
     SA->>LLM: system prompt + 信件 + 10 個工具定義
-    LLM->>MCP: lookup_customer_by_email
-    MCP->>DB: SELECT CUSTOMERS
-    MCP-->>LLM: Priya Sharma · SILVER · zh
-    LLM->>MCP: get_customer_orders_by_order_number(4471)
-    MCP-->>LLM: 2 筆 CAPTURED $199.99
-    LLM->>MCP: detect_duplicate_charges_by_order_number(4471)
-    MCP-->>LLM: duplicate=true · 超收 $199.99
+    par 同一輪並行發出
+        LLM->>MCP: lookup_customer_by_email
+        MCP--xLLM: 錯誤：MCP session terminated
+    and
+        LLM->>MCP: get_customer_orders_by_order_number(4471)
+        MCP->>DB: SELECT ORDERS · PAYMENTS
+        MCP-->>LLM: Priya Sharma · 2 筆 CAPTURED $199.99
+    and
+        LLM->>MCP: detect_duplicate_charges_by_order_number(4471)
+        MCP-->>LLM: duplicateDetected=true · 超收 $199.99
+    end
     Note over LLM: 資料支持退款 → 才允許動用寫入工具
     LLM->>MCP: issue_refund(4471, 199.99, DUPLICATE_CHARGE)
     MCP->>DB: INSERT REFUNDS · UPDATE PAYMENTS → REFUNDED
-    LLM->>MCP: log_support_ticket(BILLING_ISSUE, NEGATIVE, zh)
+    MCP-->>LLM: refundId=100
+    LLM->>MCP: log_support_ticket(REFUND_REQUEST, NEGATIVE, zh+en)
     MCP->>DB: INSERT SUPPORT_TICKETS
+    MCP-->>LLM: ticketId=100
     LLM-->>SA: AgentResponse JSON
     Note over SA,LLM: replySubject · replyBody · operatorSummary
     SA-->>IM: 交給 SupportMailSender 回信
@@ -170,29 +176,89 @@ stateDiagram-v2
 
 ### 畫面與 log 實錄
 
-> 📷 **截圖待補** —— 以下圖片路徑已預留於 `docs/screenshots/`，照 [§5 的驗收流程](#6-驗收走一遍四種情境) 實際走一遍後拍攝放入即可。
+> 以下截圖以 **情境 1：重複扣款（Priya）** 實際走一遍拍攝（2026-09-24）。資料表畫面來自 DataGrip 直連 H2 檔案（`AUTO_SERVER=true` 允許執行中連線）。
 
-**① 確認 H2 資料庫已建立** — 開啟 <http://localhost:8090/h2-console>（JDBC URL `jdbc:h2:file:./h2db/mcpserverdb`、帳號 `sa`、密碼留空），可查到 CUSTOMERS、PRODUCTS、ORDERS 等 7 張表與種子資料。
+#### ① 處理前：種子資料
 
-![H2 Console 種子資料](docs/screenshots/h2-console.png)
+mcp-server 啟動時 `schema.sql` + `data.sql` 建好 7 張表。這一輪只會用到其中幾張，先記住它們的**處理前**狀態。
 
-**② 前端模擬客戶發信** — 開啟 <http://localhost:5173>，右側「測試範例」面板點一下即自動填入表單（含案例說明、測試目的、預期結果），送出後呼叫 `POST /seed-mail`，左側 Sidebar 會出現寄件歷史。
+**CUSTOMERS** — 寄件人 Priya Sharma 是既有客戶（ID 3，`zh` / `SILVER`）：
 
-![emailUI 撰寫與測試範例](docs/screenshots/emailui-compose.png)
+![CUSTOMERS 種子資料](docs/screenshots/customer.png)
 
-**③ Mailpit 收到客戶來信** — 開啟 <http://localhost:8025>，可看到寄往 `support@example.com` 的未讀信件。10 秒內 `InboxMonitor` 就會把它撈走（信件變為已讀）。
+**ORDERS** 與 **ORDER_ITEMS** — 訂單 `4471`（ID 2）屬於客戶 3，金額 $199.99，只有一項商品（product 4）：
 
-![Mailpit 收件匣](docs/screenshots/mailpit-inbox.png)
+![ORDERS 種子資料](docs/screenshots/order.png)
 
-**④ Agent Console：看 LLM 怎麼想** — `PrettyLoggerAdvisor` 以 ASCII 框線印出每一輪的 `[SYSTEM]` / `[USER]` / `[TOOL_CALL]` / `[TOOL_RESP]` / `[ASSISTANT]`，`TokenUsageAuditAdvisor` 同時印出 token 用量，最後 `AgentEmailHandler` 印出 `operatorSummary`。
+![ORDER_ITEMS 種子資料](docs/screenshots/order-item.png)
+
+**PRODUCTS** — product 4 是 `KSET-12` ChefPro 12-Piece Knife Set，保固 60 個月：
+
+![PRODUCTS 種子資料](docs/screenshots/product.png)
+
+**PAYMENTS** — 重點在這裡：ORDER_ID 2 有**兩筆** `CAPTURED` 的 $199.99（ID 2、3，扣款時間只差 6 秒），這就是重複扣款的證據：
+
+![PAYMENTS 處理前](docs/screenshots/payment.png)
+
+**REFUNDS** 與 **SUPPORT_TICKETS** — 只有 Sarah 與 Rohan 的歷史紀錄，Priya 名下沒有任何退款或工單：
+
+![REFUNDS 處理前](docs/screenshots/refunds.png)
+
+![SUPPORT_TICKETS 處理前](docs/screenshots/support-tickets.png)
+
+#### ② 前端模擬客戶發信
+
+開啟 <http://localhost:5173>，在右側「測試範例」點選第 1 則，表單自動填入寄件人、主旨與內文；最右欄同時顯示這則案例的**情境、測試目的、預期結果**。按「送出種子信」後呼叫 `POST /seed-mail`，左側「寄件記錄」多出一筆，右上角顯示「已連線」。
+
+![emailUI 送出 Priya 的重複扣款來信](docs/screenshots/priya-send-mail-double-charges.png)
+
+#### ③ Mailpit 收到客戶來信
+
+開啟 <http://localhost:8025>，寄往 `support@example.com` 的信已經到了。10 秒內 `InboxMonitor` 就會把它撈走（信件變為已讀）。
+
+![Mailpit 收到客戶來信](docs/screenshots/mail-received.png)
+
+#### ④ Agent Console：看 LLM 怎麼想
+
+`PrettyLoggerAdvisor` 以框線印出這一輪完整的對話，由上而下依序是：
+
+| 區段 | 內容 |
+|---|---|
+| `[SYSTEM]` | 系統提示詞，`{support_address}` 已代入 `support@example.com` |
+| `[USER]` | 寄件人、收件人、收到時間、主旨、內文 |
+| `[TOOL_CALL]` ×3 | LLM **同一輪並行**發出 `lookup_customer_by_email`、`get_customer_orders_by_order_number`、`detect_duplicate_charges_by_order_number` |
+| `[TOOL_RESP]` ×3 | 訂單明細（含兩筆 CAPTURED 付款）與 `duplicateDetected: true`、超收 $199.99 |
+| `[TOOL_CALL]` / `[TOOL_RESP]` | `issue_refund(DUPLICATE_CHARGE)` → `refundId 100`，沖銷 `TXN-20260602-0189` |
+| `[TOOL_CALL]` / `[TOOL_RESP]` | `log_support_ticket(REFUND_REQUEST, NEGATIVE, zh+en, sku=KSET-12)` → `ticketId 100` |
+| `[ASSISTANT]` | 結構化輸出的 `AgentResponse` JSON：`operatorSummary`、`replySubject`、`replyBody` |
+
+接著 `TokenUsageAuditAdvisor` 印出這次共用了 **5,333 tokens**（prompt 3,665 / completion 1,668，其中 3,456 命中快取），`AgentEmailHandler` 印出給真人看的 `operatorSummary`，最後 `SupportMailSender` 回報「已回覆給 priya.sharma@example.com」。
 
 ![Agent console 的工具呼叫日誌](docs/screenshots/agent-console.png)
 
-**⑤ Mailpit 攔截 AI 回覆** — 回到 Mailpit，多了一封由 `support@example.com` 寄出的 `Re: …` 回信：帶有 `In-Reply-To` / `References` 標頭（與原信歸入同一串）、以客戶語言撰寫的正文，以及 `> ` 引用的原信。
+> 📌 **值得注意的一行**：`lookup_customer_by_email → MCP session with server terminated`。這次查客戶的呼叫其實失敗了（mcp-server 重啟過，舊的 MCP session 失效），但 LLM 沒有卡住 —— 另外兩個並行查詢已經回傳了客戶姓名與 email，它就依這些資料繼續處理。這正是系統提示詞「若工具呼叫失敗，請依據你實際取得的資訊繼續處理」的效果。
 
-![Mailpit 中的 AI 回覆信](docs/screenshots/mailpit-reply.png)
+#### ⑤ Mailpit 攔截 AI 回覆
 
-至此完成一個 **Demo Cycle**：客戶發信 → 信件進入信箱 → LLM 自主查證並操作工具 → 自動回覆客戶 → 工單落地。
+回到 Mailpit，收件匣多了一封由 `support@example.com` 寄給 Priya 的 `Re: 訂單號 #4471 被收了兩次費用`，與原信排在同一串（`In-Reply-To` / `References` 標頭）。正文以中文稱呼 Priya、說明已確認兩筆 $199.99 扣款、已對 `TXN-20260602-0189` 退款 $199.99（退款編號 100）、預計 5–7 個工作天入帳，以支援團隊署名，最後附上 `> ` 引用的原信。**信中沒有提及任何工具或「我是 AI」**，符合系統提示詞的要求。
+
+![Mailpit 中的 AI 回覆信](docs/screenshots/mail-response.png)
+
+#### ⑥ 處理後：資料庫變化
+
+**PAYMENTS** — ID 3（`TXN-20260602-0189`）由 `CAPTURED` 沖銷為 `REFUNDED`；ID 2 保持 `CAPTURED`，**只退一筆**：
+
+![PAYMENTS 處理後](docs/screenshots/payment-updated.png)
+
+**REFUNDS** — 新增 ID 100：ORDER_ID 2、PAYMENT_ID 3、$199.99、`DUPLICATE_CHARGE`、`PROCESSED`（ID 從 100 起跳，是 `data.sql` 的 `RESTART WITH 100`）：
+
+![REFUNDS 新增退款](docs/screenshots/refund-inserted.png)
+
+**SUPPORT_TICKETS** — 新增 ID 100：客戶 3、訂單 2、商品 4（`KSET-12`，LLM 從訂單明細取得 SKU）、`EMAIL`，`RAW_MESSAGE` 逐字保存原信：
+
+![SUPPORT_TICKETS 新增工單](docs/screenshots/support-ticket-inserted.png)
+
+至此完成一個 **Demo Cycle**：客戶發信 → 信件進入信箱 → LLM 自主查證並操作工具 → 自動回覆客戶 → 退款與工單落地。
 
 ---
 
@@ -295,7 +361,7 @@ springai_agent/
 │       │   └── dto/SupportDtos.java              ★ 工具回傳值（Java records，交易內建立）
 │       └── resources/
 │           ├── application.properties              protocol=streamable、/mcp 端點
-│           └── sql/schema.sql · data.sql         ★ CREATE TABLE IF NOT EXISTS + MERGE INTO
+│           └── sql/schema.sql · data.sql         ★ DROP ALL OBJECTS → CREATE TABLE + MERGE INTO
 │
 ├── my-agent-client/                              AI Agent（:8080）
 │   ├── compose.yaml                              ★ Mailpit；spring-boot-docker-compose 啟動時自動拉起
@@ -322,14 +388,16 @@ springai_agent/
 │           ├── application.properties
 │           └── prompts/support-agent-system.st   ★ 繁中系統提示詞（Agent 的「工作守則」）
 │
-└── emailUI/                                      測試前端（:5173）
-    └── src/
-        ├── App.jsx                                 history / selected 狀態
-        ├── components/
-        │   ├── ComposePanel.jsx                  ★ 表單 + TEST_EXAMPLES + 結果卡片
-        │   └── Sidebar.jsx                         寄件歷史 + 頭像 + 相對時間
-        ├── App.css                                 元件樣式（CSS Nesting）
-        └── index.css                               CSS 變數（--bg / --accent / --sent / --failed）
+├── emailUI/                                      測試前端（:5173）
+│   └── src/
+│       ├── App.jsx                                 history / selected 狀態
+│       ├── components/
+│       │   ├── ComposePanel.jsx                  ★ 表單 + TEST_EXAMPLES + 結果卡片
+│       │   └── Sidebar.jsx                         寄件歷史 + 頭像 + 相對時間
+│       ├── App.css                                 元件樣式（CSS Nesting）
+│       └── index.css                               CSS 變數（--bg / --accent / --sent / --failed）
+│
+└── docs/screenshots/                             README 截圖（見 §1 畫面與 log 實錄）
 ```
 
 > ⚠️ **兩個 Spring Boot 模組互相獨立，沒有 parent pom、沒有 Maven 依賴。** 它們唯一的連結是 client 設定檔中的 `http://localhost:8090` + `/mcp` —— 所以 **mcp-server 必須先啟動**，client 啟動時才連得上並取得工具清單。
@@ -346,7 +414,7 @@ springai_agent/
 | [容錯與重試](#容錯與重試--用已讀旗標當作佇列) | `InboxMonitor` · `EmailHandler` | 失敗就標回未讀，下一輪再來 |
 | [郵件串接](#郵件串接--回信要像真人回的) | `SupportMailSender` | RFC 2822 標頭 + 引用原信 |
 | [可觀測性](#可觀測性--看得見-llm-的每一步) | `PrettyLoggerAdvisor` · `TokenUsageAuditAdvisor` | 每一次工具呼叫都印得出來 |
-| [冪等初始化](#冪等初始化--重啟一百次資料都一樣) | `schema.sql` · `data.sql` | 重啟不重複建表、不重複塞資料 |
+| [冪等初始化](#冪等初始化--重啟一百次資料都一樣) | `schema.sql` · `data.sql` | 每次重啟都回到同一份乾淨的種子資料 |
 
 ---
 
@@ -467,11 +535,11 @@ if (!handled) mailpitInboxClient.setRead(id, false);          // 失敗 → 標�
 
 `spring.sql.init.mode=always` 讓每次啟動都執行 SQL，`spring.jpa.hibernate.ddl-auto=none` 讓 schema 完全由腳本管理：
 
-- `schema.sql` → `CREATE TABLE IF NOT EXISTS`
-- `data.sql` → `MERGE INTO`（依主鍵 upsert）
+- `schema.sql` → 先 `DROP ALL OBJECTS`，再 `CREATE TABLE IF NOT EXISTS`
+- `data.sql` → `MERGE INTO`（依主鍵 upsert），並把各表 identity `RESTART WITH 100`，Agent 新增的資料從 ID 100 起跳、一眼可辨
 - 訂單日期用 `DATEADD('DAY', -22, CURRENT_DATE)` 相對今天計算 → **保固期判斷永遠與 Demo 設計一致**，不會因為時間流逝而失效
 
-> 📌 `MERGE INTO` 會把種子資料**覆寫回初始值**，但 Agent 新增的 REFUNDS / SUPPORT_TICKETS（新 ID）會保留。想完全重來，刪掉 `mcp-server/h2db/` 再啟動即可。
+> ⚠️ 因為有 `DROP ALL OBJECTS`，**每次重啟 mcp-server 都會清空整個資料庫**，Agent 寫入的 REFUNDS / SUPPORT_TICKETS 也一起消失。這對 Demo 是好事（每次都從乾淨狀態開始），但想保留處理紀錄就得拿掉這行。
 
 ---
 
@@ -481,7 +549,7 @@ if (!handled) mailpitInboxClient.setRead(id, false);          // 失敗 → 標�
 
 | # | 寄件人 | 情境 | 驗證的能力 | 預期工具鏈 | 預期結果 |
 |---|---|---|---|---|---|
-| 1 | priya.sharma@example.com | 中文：#4471 被扣兩次 $199.99 | **先查證再退款** | `lookup_customer_by_email` → `get_customer_orders_by_order_number` → `detect_duplicate_charges_by_order_number` → `issue_refund(DUPLICATE_CHARGE)` → `log_support_ticket(BILLING_ISSUE)` | 一筆 PAYMENT 轉 `REFUNDED`、新增 REFUND 與工單 |
+| 1 | priya.sharma@example.com | 中文：#4471 被扣兩次 $199.99 | **先查證再退款** | `lookup_customer_by_email` → `get_customer_orders_by_order_number` → `detect_duplicate_charges_by_order_number` → `issue_refund(DUPLICATE_CHARGE)` → `log_support_ticket(REFUND_REQUEST)`（前三個並行） | 一筆 PAYMENT 轉 `REFUNDED`、新增 REFUND 與工單 —— ✅ [已實測](#畫面與-log-實錄) |
 | 2 | sarah.mitchell@example.com | 英文、情緒激動：果汁機第三次破損 | **情緒下仍抓得到訴求**、依偏好語言回信 | `lookup_customer_by_email` → `get_customer_orders_by_email` → `get_customer_ticket_history_by_email` → `check_warranty_by_order_number_and_sku` → `issue_refund(WARRANTY)` → `log_support_ticket(WARRANTY_CLAIM)` | 訂單 4198 退款、以**英文**回信 |
 | 3 | rohan.verma@example.com | 反諷語氣：「攪拌機像水泥預拌車」 | **穿透反諷**、未確認故障前不直接退款 | `lookup_customer_by_email` → `check_warranty_by_order_number_and_sku(4502)` → `log_support_ticket(COMPLAINT/WARRANTY_CLAIM, NEGATIVE)` | 不退款；提供排查／退回檢測等選項 |
 | 4 | tonysk@example.com | 非客戶：詢問瑜珈墊保固 | **辨識售前諮詢**、不誤觸售後工具 | `lookup_customer_by_email`（查無）→ `search_products_by_name_or_sku("yoga")` | 回覆 YOGA-08 保固 12 個月；不退款、不建工單 |
@@ -501,7 +569,7 @@ if (!handled) mailpitInboxClient.setRead(id, false);          // 失敗 → 標�
 | Spring AI | **2.0.0** | 由 `spring-ai-bom` 匯入 |
 | MCP | `spring-ai-starter-mcp-server-webmvc` | `protocol=streamable`，端點 `/mcp` |
 | 工具註解 | `@McpTool` / `@McpToolParam` | `org.springframework.ai.mcp.annotation` |
-| 持久化 | `spring-boot-starter-data-jpa` + `h2` | 檔案式 DB，`AUTO_SERVER=true` |
+| 持久化 | `spring-boot-starter-data-jpa` + `h2` **2.3.232** | 檔案式 DB，`AUTO_SERVER=true`；⚠️ 刻意覆寫 Boot 管理的 2.4.240，見 [疑難排解](#疑難排解) |
 | H2 Console | `spring-boot-h2console` | Boot 4 起獨立成模組 |
 | Web | `spring-boot-starter-webmvc` | Boot 4 新命名（不再是 `-web`） |
 | 其他 | Lombok、devtools | |
@@ -620,7 +688,7 @@ curl -X POST "http://localhost:8080/seed-mail" \
 
 | # | 點選情境 | 在 Agent console 該看到 | 在 Mailpit 該看到 | 在 H2 該看到 | 對應截圖 |
 |---|---|---|---|---|---|
-| 1 | 重複扣款（Priya） | `[TOOL_CALL] detect_duplicate_charges…` → `issue_refund` | 中文回信，說明已退款 | PAYMENTS id=3 → `REFUNDED`；REFUNDS、SUPPORT_TICKETS 各 +1 | `agent-console.png`、`mailpit-reply.png` |
+| 1 | 重複扣款（Priya） | `[TOOL_CALL] detect_duplicate_charges…` → `issue_refund` | 中文回信，說明已退款 | PAYMENTS id=3 → `REFUNDED`；REFUNDS、SUPPORT_TICKETS 各 +1（ID 100） | `agent-console.png`、`mail-response.png`、`payment-updated.png` |
 | 2 | 保固內退款（Sarah） | `check_warranty…` → `issue_refund(WARRANTY)` | **英文**致歉回信 | 訂單 4198 的付款 → `REFUNDED` | — |
 | 3 | 反諷投訴（Rohan） | `check_warranty…(4502)`，**無** `issue_refund` | 提供排查／檢測選項的回信 | 僅 SUPPORT_TICKETS +1 | — |
 | 4 | 售前諮詢（tonysk） | `lookup_customer_by_email` 報錯 → `search_products…` | 回覆保固 12 個月 | 無變動 | — |
@@ -826,7 +894,8 @@ services:
 | 信件被撈走但沒有回信 | 看 log 的 `Agent 處理…失敗` 或 `略過回覆`；後者代表 `replyBody` 為空或寄件人無效 |
 | Console 看不到 `[TOOL_CALL]` | `PrettyLoggerAdvisor` 的 log level 不是 DEBUG |
 | 售前情境 log 出現 `找不到此電子郵件對應的顧客帳號` | **屬預期行為** —— 非客戶查無資料，LLM 會改走產品搜尋 |
-| 同一情境重跑，退款失敗 | 該訂單的 CAPTURED 付款已被上一輪沖銷。**重啟 mcp-server** 讓 `MERGE INTO` 還原種子資料 |
+| mcp-server log 出現 `Check constraint invalid: "CONSTRAINT_6B: "`（REFUNDS）或 `"CONSTRAINT_5: "`（SUPPORT_TICKETS），退款與工單永遠寫不進去 | **H2 2.4.240 的回歸 bug**：建立 CHECK 約束的連線關閉後（Hikari 汰換 sql init 用過的連線），資料庫仍開著時所有 INSERT 都會被拒，即使值完全合法。`mcp-server/pom.xml` 已用 `<h2.version>2.3.232</h2.version>` 覆寫；若升級 Spring Boot 後重現，先確認這個覆寫仍在 |
+| 同一情境重跑，退款失敗 | 該訂單的 CAPTURED 付款已被上一輪沖銷。**重啟 mcp-server**，`DROP ALL OBJECTS` + `data.sql` 會還原種子資料 |
 | 保固判斷與預期不符 | 訂單日期是相對 `CURRENT_DATE` 計算的；若 H2 資料來自很久以前的啟動，重啟一次即可重算 |
 | H2 資料「消失了」 | 從不同工作目錄啟動 mcp-server 會寫到不同的 `h2db/`。請固定在 `mcp-server/` 下啟動 |
 | Agent 把自己的回信當新信處理 | 不應發生 —— 查詢條件已排除 `from:support@example.com`；若改了 `inbox.address` 要確認兩處一致 |

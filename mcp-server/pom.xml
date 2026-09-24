@@ -29,6 +29,9 @@
     <properties>
         <java.version>25</java.version>
         <spring-ai.version>2.0.0</spring-ai.version>
+        <!-- 覆寫 Spring Boot 4.1.0 管理的 H2 2.4.240：該版本有回歸 bug，建立 CHECK 約束的連線關閉後，
+             其他連線的 INSERT 會一律報 "Check constraint invalid"（REFUNDS / SUPPORT_TICKETS 寫入失敗）。 -->
+        <h2.version>2.3.232</h2.version>
     </properties>
     <dependencies>
         <dependency>
